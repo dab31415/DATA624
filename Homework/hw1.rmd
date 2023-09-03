@@ -1,0 +1,114 @@
+---
+title: 'DATA624: Homework 1'
+author: "Donald Butler"
+date: "2023-09-03"
+output: 
+  html_document:
+    theme: yeti
+    highlight: tango
+    toc: true
+    toc_float: true
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Homework 1
+
+```{r loadLibraries, warning=FALSE, message=FALSE}
+library(fpp3)
+library(tidyverse)
+library(ggplot2)
+```
+
+## Exercise 2.1
+
+<blockquote>
+Explore the following four time series: *Bricks* from *aus_production*, *Lynx* from *pelt*, *Close* from *gafa_stock*, *Demand* from *vic_elec*.  
+
+* Use ? (or help()) to find out about the data in each series.
+* What is the time interval of each series?
+* Use autoplot() to produce a time plot of each series.
+* For the last plot, modify the axis labels and title.
+</blockquote>
+
+### *Bricks* from *aus_production*
+
+The time interval in the *aus_production* dataset is quarterly.
+
+```{r}
+#help(aus_production)
+autoplot(aus_production, Bricks)
+```
+
+### *Lynx* from *pelt*
+
+The time interval for the *pelt* dataset is annual.
+
+```{r}
+#help(pelt)
+autoplot(pelt, Lynx)
+```
+
+### *Close* from *gafa_stock*
+
+The time interval for the *gafa_stock* dataset is trading days of the stock market.
+
+```{r}
+help(gafa_stock)
+autoplot(gafa_stock, Close)
+```
+
+### *Demand* from *vic_elec*
+
+The time interval for the *vic_elec* dataset is every 30 minutes.
+
+```{r}
+help(vic_elec)
+autoplot(vic_elec, Demand) + 
+  ggtitle('Electricity Demand for Victoria, Australia', 
+          subtitle = 'Half-Hour Intervals') + 
+  labs(x = 'Time in 30 minute intervals', 
+       y = 'Demand in MWh')
+```
+
+## Exercise 2.2
+
+<blockquote>
+Use *filter()* to find what days correspond to the peak closing price for each of the four stocks in *gafa_stock*.
+</blockquote>
+
+```{r}
+gafa_stock %>%
+  group_by(Symbol) %>%
+  filter(Close == max(Close)) %>%
+  select(Symbol,Date,Close)
+```
+
+## Exercise 2.3
+
+<blockquote>
+Download the file *tute1.csv* from [the book website]('https://bit.ly/fpptute1'), open it in Excel, and review its contents. You should find four columns of information. Columns B through D each contain a quarterly series, labelled Sales, AdBudget and GDP. Sales contains the quarterly sales for a small company over the period 1981-2005. AdBudget is the advertising budget and GDP is the gross domestic product. All series have been adjusted for inflation.
+</blockquote>
+
+
+## Exercise 2.4
+
+<blockquote>
+</blockquote>
+
+
+## Exercise 2.5
+
+<blockquote>
+</blockquote>
+
+
+## Exercise 2.8
+
+<blockquote>
+</blockquote>
+
+
