@@ -1,14 +1,16 @@
 ---
 title: 'DATA624: Homework 1'
 author: "Donald Butler"
-date: "2023-09-03"
-output: 
+date: "2023-09-09"
+output:
   html_document:
     theme: yeti
     highlight: tango
-    toc: true
-    toc_float: true
-  pdf_document: default
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
 ---
 
 ```{r setup, include=FALSE}
@@ -20,7 +22,6 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r loadLibraries, warning=FALSE, message=FALSE}
 library(fpp3)
 library(tidyverse)
-library(ggplot2)
 ```
 
 ## Exercise 2.1
@@ -57,7 +58,7 @@ autoplot(pelt, Lynx)
 The time interval for the *gafa_stock* dataset is trading days of the stock market.
 
 ```{r}
-help(gafa_stock)
+#help(gafa_stock)
 autoplot(gafa_stock, Close)
 ```
 
@@ -90,25 +91,261 @@ gafa_stock %>%
 ## Exercise 2.3
 
 <blockquote>
-Download the file *tute1.csv* from [the book website]('https://bit.ly/fpptute1'), open it in Excel, and review its contents. You should find four columns of information. Columns B through D each contain a quarterly series, labelled Sales, AdBudget and GDP. Sales contains the quarterly sales for a small company over the period 1981-2005. AdBudget is the advertising budget and GDP is the gross domestic product. All series have been adjusted for inflation.
+Download the file tute1.csv from the book website, open it in Excel, and review its contents. You should find four columns of information. Columns B through D each contain a quarterly series, labelled Sales, AdBudget and GDP. Sales contains the quarterly sales for a small company over the period 1981-2005. AdBudget is the advertising budget and GDP is the gross domestic product. All series have been adjusted for inflation.
 </blockquote>
 
+Downloaded the tute1.csv file and opened it.
+
+Read tute1.csv from github folder and convert to a time series.
+```{r}
+ts_tute <- read.csv('https://raw.githubusercontent.com/dab31415/DATA624/main/Homework/tute1.csv') %>%
+  mutate(Quarter = yearquarter(Quarter)) %>%
+  as_tsibble(index = Quarter)
+  
+```
+
+Construct plot.
+
+```{r}
+ts_tute %>%
+  pivot_longer(-Quarter) %>%
+  ggplot(aes(x = Quarter, y = value, colour = name)) + 
+  geom_line() + 
+  facet_grid(name ~ ., scales = 'free_y')
+```
+
+The facet_grid function separtes the graph into individual panels based on the variable provided.
 
 ## Exercise 2.4
 
 <blockquote>
+The USgas package contains data on the demand for natural gas in the US.  
+
+a. Install the USgas package.  
+b. Create a *tsibble* from *us_total* with year as the index and state as the key.  
+c. Plot the annual natural gas consumption by state for the New England area (comprising the states of Maine, Vermont, New Hampshire, Massachusetts, Connecticut and Rhode Island).  
 </blockquote>
 
+```{r}
+library(USgas)
+
+ts_usgas <- us_total %>%
+  as_tsibble(index = year, key = state)
+
+ne_states <- c('Maine','Vermont','New Hampshire', 'Massachusetts', 'Connecticut', 'Rhode Island')
+
+ts_usgas %>% 
+  filter(state %in% ne_states) %>%
+  autoplot(y) +
+    labs(title = 'Total Natural Gas Consumpion',
+         subtitle = 'Northeast States',
+         x = 'Year',
+         y = 'Consumption (mcf)') 
+
+```
 
 ## Exercise 2.5
 
 <blockquote>
+a. Download tourism.xlsx from the book website and read it into R using *readxl::read_excel()*.
+b. Create a tsibble which is identical to the *tourism* tsibble from the *tsibble* package.
 </blockquote>
 
+
+```{r}
+library(readxl)
+
+xls_tourism <- read_excel('./tourism.xlsx')
+ts_tourism <- xls_tourism %>%
+  mutate(Quarter = yearquarter(Quarter)) %>%
+  as_tsibble(index = Quarter, key = c('Region','Purpose','State'))
+
+head(ts_tourism)
+```
+
+<blockquote>
+c. Find what combination of *Region* and *Purpose* had the maximum number of overnight trips on average.
+</blockquote>
+
+```{r}
+ts_tourism %>%
+  mutate(mean_trips = mean(Trips), 
+         .by = c(Region,Purpose), .keep = 'none') %>%
+  distinct() %>%
+  top_n(1, mean_trips)
+```
+
+<blockquote>
+d. Create a new tsibble which combines the Purposes and Regions, and just has total trips by State.
+</blockquote>
+
+```{r}
+ts_state_tourism <- xls_tourism %>%
+  mutate(state_trips = sum(Trips), 
+         Quarter = yearquarter(Quarter), 
+         .by = c(Quarter, State), .keep = 'none') %>%
+  distinct() %>%
+  as_tsibble(index = Quarter, key = State)
+  
+ts_state_tourism %>%
+  autoplot(.vars = state_trips) +
+    labs(title = 'Australian domestic overnight trips',
+         x = 'Quarter',
+         y = 'Trips (Thousands)') 
+  
+```
 
 ## Exercise 2.8
 
 <blockquote>
+Use the following graphics functions: autoplot(), gg_season(), gg_subseries(), gg_lag(), ACF() and explore features from the following time series: “Total Private” *Employed* from *us_employment*, *Bricks* from *aus_production*, *Hare* from *pelt*, “H02” *Cost* from *PBS*, and *Barrels* from *us_gasoline*.
+
+* Can you spot any seasonality, cyclicity, and trend?
+* What do you learn about the series?
+* What can you say about the seasonal patterns?
+* Can you identify any unusual years?
+
 </blockquote>
+
+### "Total Private" *Employed* from *us_employment*
+
+```{r}
+ts_employed <- us_employment %>%
+  filter(Title == 'Total Private') %>%
+  select(Month, Employed)
+
+autoplot(ts_employed, .vars = Employed)
+```
+
+```{r}
+gg_season(ts_employed, y = Employed)
+```
+
+```{r}
+gg_subseries(ts_employed, y = Employed)
+```
+
+```{r}
+gg_lag(ts_employed, y = Employed, lags = 1:12)
+```
+
+```{r}
+ACF(ts_employed, y = Employed) %>%
+  autoplot()
+```
+
+The graphs of employment data show an annual seasonality with peaks in the summer months. There is an overall trend that is increasing over time. There are a few years with decreases in employment which are against the long term trend, with 2008 having the most significant decrease.
+
+### *Bricks* from *aus_production*
+
+```{r}
+ts_bricks <- aus_production %>%
+  select(Quarter, Bricks)
+
+autoplot(ts_bricks, .vars = Bricks)
+```
+
+```{r}
+gg_season(ts_bricks, y = Bricks)
+```
+
+```{r}
+gg_subseries(ts_bricks, y = Bricks)
+```
+
+```{r}
+gg_lag(ts_bricks, y = Bricks)
+```
+
+```{r}
+ACF(ts_bricks, y = Bricks) %>%
+  autoplot()
+```
+
+The overall trend was increasing until about 1982, since that time the trend has been decreasing. The data shows a seasonality which repeats annually. Brick production is lowest in Q1 summer in Australia.
+
+### *Hare* from *pelt*
+
+```{r}
+ts_hare <- pelt %>%
+  select(Year, Hare)
+
+autoplot(ts_hare, .vars = Hare)
+```
+
+```{r}
+#gg_season(ts_hare, y = Hare)
+```
+
+```{r}
+gg_subseries(ts_hare, y = Hare)
+```
+
+```{r}
+gg_lag(ts_hare, y = Hare)
+```
+
+```{r}
+ACF(ts_hare, y = Hare) %>%
+  autoplot()
+```
+
+The seasonality of Snowshoe Hare pelts is about 8 years. The overall trend of the data is flat.
+
+### "H02" *Cost* from *PBS*
+
+```{r}
+ts_cost <- PBS %>%
+  filter(ATC2 == 'H02') %>%
+  select(Month, Cost)
+
+autoplot(ts_cost, .vars = Cost)
+```
+
+```{r}
+gg_season(ts_cost, y = Cost)
+```
+
+```{r}
+gg_subseries(ts_cost, y = Cost)
+```
+
+```{r}
+gg_lag(ts_cost %>% filter(Concession == 'General', Type == 'Safety net'), y = Cost, lags = 1:12)
+```
+
+```{r}
+ACF(ts_cost, y = Cost) %>%
+  autoplot()
+```
+
+There annual seasonality of the data series due to the reset of annual deductibles. At the beginning of the year, co-payments are paid, but the safety net funds remain low until the patient deductibles are met. There is a bit of lag in the data as January payment are likely the result of December prescriptions. There is an overall trend in the data is increasing.
+
+### *Barrels* from *us_gasoline*
+
+```{r}
+ts_barrels <- us_gasoline %>%
+  select(Week, Barrels)
+
+autoplot(ts_barrels, .vars = Barrels)
+```
+
+```{r}
+gg_season(ts_barrels, y = Barrels)
+```
+
+```{r}
+gg_subseries(ts_barrels, y = Barrels)
+```
+
+```{r}
+gg_lag(ts_barrels, y = Barrels, lags = 1:26)
+```
+
+```{r}
+ACF(ts_barrels, y = Barrels) %>%
+  autoplot()
+```
+
 
 
