@@ -1,0 +1,134 @@
+---
+title: 'DATA624: Homework 4'
+author: "Donald Butler"
+date: "2023-10-01"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Homework 4
+
+```{r loadLibraries, warning=FALSE, message=FALSE}
+library(fpp3)
+library(tidyverse)
+library(corrplot)
+library(mlbench)
+library(inspectdf)    # factor plots
+library(naniar)       # missing values by factor
+```
+
+## Exercise 3.1
+
+The UC Irvine Machine Learning Repository contains a data set related to glass identification. The data consist of 214 glass samples labeled as one of seven class categories. There are nine predictors, including the refractive index and percentages of eight elements: Na, Mg, Al, Si, K, Ca, Ba, and Fe.
+
+```{r}
+data(Glass)
+str(Glass)
+```
+
+a. Using visualizations, explore the predictor variables to understand their distributions as well as the relationships between predictors.
+
+```{r}
+Glass |>
+  select(-Type) |>
+  gather() |>
+  ggplot(aes(value)) +
+  stat_density() + 
+  labs(title = "Statistic Density of Predictor Variables") + 
+  facet_wrap(~key, scales = 'free')
+
+```
+
+```{r}
+Glass |>
+  select(-Type) |>
+  cor() |>
+  corrplot.mixed(tl.pos = 'd', tl.col = 'black',
+                 title = 'Correlation between Predictor Values', 
+                 mar = c(0,0,2,0))
+```
+
+b. Do there appear to be any outliers in the data? Are any predictors skewed?
+
+```{r}
+Glass |>
+  select(-Type) |>
+  gather() |>
+  ggplot(aes(value)) +
+  geom_boxplot() + 
+  facet_wrap(~key, scales = 'free') + 
+  labs(title = 'Boxplots of Predictor Variables')
+```
+
+Many of the chemical elements have outliers. 
+
+c. Are there any relevant transformations of one or more predictors that might improve the classification model?
+
+* Elements with significant right skews: Iron, Barium, and Potassium, may be good candidates for a log transform.
+* Elements with near normal distributions: Aluminium, Calcium, Silicon, and Sodium, may be good candidates for z-score normalization.
+* Magnesium has a left skew and may benefit from a root transformation.
+
+## Exercise 3.2
+
+The soybean data can also be found at the UC Irvine Machine Learning Repository. Data were collected to predict disease in 683 soybeans. The 35 predictors are mostly categorical and include information on the environmen- tal conditions (e.g., temperature, precipitation) and plant conditions (e.g., left spots, mold growth). The outcome labels consist of 19 distinct classes.
+
+```{r}
+data(Soybean)
+str(Soybean)
+```
+
+a. Investigate the frequency distributions for the categorical predictors. Are any of the distributions degenerate in the ways discussed earlier in this chapter?
+
+```{r}
+Soybean |>
+  inspect_types() |>
+  show_plot()
+```
+
+```{r}
+Soybean |>
+  inspect_cat() |>
+  show_plot()
+```
+
+Both `mycelium` and `sclerotia` are nearly degenerate with a single large value after excluding missing values. 
+
+b. Roughly 18% of the data are missing. Are there particular predictors that are more likely to be missing? Is the pattern of missing data related to the classes?
+
+There seems to be a pattern of missing values with the leaf and seed predictors.
+
+```{r}
+Soybean |>
+  gg_miss_fct(Class) + 
+  labs(title = 'Missing Values by Class')
+```
+
+Three of the classes: `2-4-d-injury`, `cyst-nematode`, and `herbicide-injury`, are missing 100% of the data for most of the variables. There are two other classes: `diaporthe-pod-&-stem-blight` and `phytophthora-rot`, with missing values for some of the variables.
+
+```{r}
+Soybean |>
+  filter(Class %in% c('2-4-d-injury',
+                      'cyst-nematode',
+                      'herbicide-injury',
+                      'diaporthe-pod-&-stem-blight',
+                      'phytophthora-rot')) |>
+  count(Class)
+```
+
+c. Develop a strategy for handling missing data, either by eliminating predictors or imputation.
+
+I would eliminate the classes: `2-4-d-injury`, `cyst-nematode`, `diaporthe-pod-&-stem-blight`, and `herbicide-injury`. These classes represent less than 8% of the overall dataset and have significant missing values for most of the variables. 
+
+The `phytophthora-rot` class represents nearly 13% of the dataset, so it seems most appropriate to use imputation to supply the missing values based on knowledge of the class and the missing variables.
+
