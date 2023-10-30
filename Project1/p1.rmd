@@ -1,0 +1,562 @@
+---
+title: 'DATA624: Project 1'
+author: "Donald Butler"
+date: "2023-10-29"
+output:
+  html_document:
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80), tidy=TRUE, echo = TRUE)
+
+library(fpp3)
+library(openxlsx)
+library(stringr)
+```
+
+# Part A
+
+**ATM Forecast** - *ATM624Data.xlsx*
+
+In part A, I want you to forecast how much cash is taken out of 4 different ATM machines for May 2010. The data is given in a single file. The variable ‘Cash’ is provided in hundreds of dollars, other than that it is straight forward. I am being somewhat ambiguous on purpose to make this have a little more business feeling. Explain and demonstrate your process, techniques used and not used, and your actual forecast. I am giving you data via an excel file, please provide your written report on your findings, visuals, discussion and your R code via an RPubs link along with the actual rmd file. Also please submit the forecast which you will put in an Excel readable file.
+
+## Loading Data
+
+Loaded data from an Excel file into a `tsibble` object. The DATE column needed to be converted from an Excel datetime value, to a date type. Some rows in the file were missing values for the ATM value, so those were filtered out.
+
+```{r Load_ATM, warning=FALSE, echo=FALSE}
+ATM <- read.xlsx('./Data/ATM624Data.xlsx', sheet = 1) |>
+  mutate(DATE = as_date(DATE)) |>
+  filter(str_like(ATM, 'ATM[1-4]')) |>
+  as_tsibble(index = DATE, key = ATM)
+
+ATM |>
+  autoplot(Cash) +
+  facet_wrap(~ ATM, ncol = 1, scales = 'free_y')
+```
+
+Looking at the data, we see two anomalies that will need to be addressed. ATM3 appears to be a newly installed machine, and only has a few days of data. ATM4 has a single value far outside the normal range of values. 
+
+Each series is following a weekly trend, with Thursdays having the lowest ATM usage.
+
+## Missing Values
+
+A quick check for missing values shows that there are a total of 5 missing values.
+
+```{r}
+ATM |> 
+  filter(is.na(Cash))
+```
+
+To preserve the seasonality of the data, we will interpolate the missing values using an ARIMA model.
+
+```{r}
+ATM <- ATM |>
+  model(ARIMA(Cash)) |>
+  interpolate(ATM)
+
+ATM |>
+  filter((ATM == 'ATM1' & (DATE == '2009-06-13' | DATE == '2009-06-16' | DATE == '2009-06-22')) | (ATM == 'ATM2' & (DATE == '2009-06-18' | DATE == '2009-06-24')))
+```
+
+## ATM Models
+
+### ATM1
+
+```{r}
+ATM1 <- ATM |>
+  filter(ATM == 'ATM1')
+```
+
+#### Series Exploration
+
+The data clearly indicates a weekly seasonal component. 
+
+```{r}
+ATM1 |>
+  gg_tsdisplay(Cash, plot_type = 'partial') + 
+  labs(title = 'ATM1 Usage')
+```
+
+#### Transformation
+
+Identify a lambda value for a Box-Cox transformation.
+
+```{r}
+lambda <- ATM1 |>
+  features(Cash, features = guerrero) |>
+  pull(lambda_guerrero)
+
+lambda
+```
+
+#### Models
+
+We will construct a few models to determine the best choice. 
+
+```{r}
+fit1 <- ATM1 |>
+  model(
+    additive = ETS(box_cox(Cash, lambda) ~ error('A') + trend('N') + season('A')),
+    multiplicative = ETS(box_cox(Cash, lambda) ~ error('M') + trend('N') + season('M')),
+    arima = ARIMA(box_cox(Cash, lambda), stepwise = FALSE)
+  )
+
+fit1 |>
+  glance() |>
+  select(.model:BIC) |>
+  arrange(AIC)
+```
+
+The ARIMA model has the lowest AIC statistic.
+
+```{r}
+fit1 |>
+  select(arima) |>
+  report()
+```
+
+```{r}
+fit1 |>
+  select(arima) |>
+  gg_tsresiduals()
+```
+
+The residuals for the ARIMA model appear to normal centered around zero and have no spikes outside of the confidence interval. 
+
+#### Forecast
+
+```{r}
+fc1 <- fit1 |>
+  select(ATM, arima) |>
+  forecast(h = 31)
+```
+
+```{r}
+fc1 |>
+  autoplot(ATM1)
+```
+
+```{r}
+fc1 |>
+  as.data.frame() |>
+  select(DATE, .mean) |>
+  rename(Cash = .mean) |>
+  mutate(Cash = round(Cash,0))
+```
+
+### ATM2
+
+```{r}
+ATM2 <- ATM |>
+  filter(ATM == 'ATM2')
+```
+
+#### Series Exploration
+
+The data clearly indicates a weekly seasonal component with the spikes in the ACF at 7, 14, and 21. 
+
+```{r}
+ATM2 |>
+  gg_tsdisplay(Cash, plot_type = 'partial') + 
+  labs(title = 'ATM2 Usage')
+```
+
+#### Transformation
+
+Identify a lambda value for a Box-Cox transformation.
+
+```{r}
+lambda <- ATM2 |>
+  features(Cash, features = guerrero) |>
+  pull(lambda_guerrero)
+
+lambda
+```
+
+#### Models
+
+We will construct a few models to determine the best choice. 
+
+```{r}
+fit2 <- ATM2 |>
+  model(
+    additive = ETS(box_cox(Cash, lambda) ~ error('A') + trend('N') + season('A')),
+    multiplicative = ETS(box_cox(Cash, lambda) ~ error('M') + trend('N') + season('M')),
+    arima = ARIMA(box_cox(Cash, lambda), stepwise = FALSE)
+  )
+
+fit2 |>
+  glance() |>
+  select(.model:BIC) |>
+  arrange(AIC)
+```
+
+The ARIMA model has the lowest AIC statistic.
+
+```{r}
+fit2 |>
+  select(arima) |>
+  report()
+```
+
+```{r}
+fit2 |>
+  select(arima) |>
+  gg_tsresiduals()
+```
+
+The residuals for the ARIMA model appear to normal centered around zero and have no spikes outside of the confidence interval. 
+
+#### Forecast
+
+```{r}
+fc2 <- fit2 |>
+  select(ATM, arima) |>
+  forecast(h = 31)
+```
+
+```{r}
+fc2 |>
+  autoplot(ATM2)
+```
+
+```{r}
+fc2 |>
+  as.data.frame() |>
+  select(DATE, .mean) |>
+  rename(Cash = .mean) |>
+  mutate(Cash = round(Cash,0))
+```
+
+### ATM3
+
+```{r}
+ATM3 <- ATM |>
+  filter(ATM == 'ATM3')
+```
+
+#### Series Exploration
+
+The data for this ATM indicates that it is newly installed. While we may expect a similar weekly pattern to hold with this ATM, there isn't enough data to establish a pattern.
+
+```{r}
+ATM3 |>
+  gg_tsdisplay(Cash, plot_type = 'partial') + 
+  labs(title = 'ATM3 Usage')
+```
+
+#### Models
+
+We will construct a model based on the MEAN of the 3 values in the data set. 
+
+```{r}
+fit3 <- ATM3 |>
+  filter(Cash > 0) |>
+  model(MEAN(Cash))
+
+fit3 |>
+  report()
+```
+
+#### Forecast
+
+```{r}
+fc3 <- fit3 |>
+  forecast(h = 31)
+```
+
+```{r}
+fc3 |>
+  autoplot(ATM3)
+```
+
+```{r}
+fc3 |>
+  as.data.frame() |>
+  select(DATE, .mean) |>
+  rename(Cash = .mean) |>
+  mutate(Cash = round(Cash,0))
+```
+
+### ATM4
+
+#### Outliers
+
+There is a clear outlier in ATM4 and it would be best to remove it before generating models on the data. 
+
+```{r}
+ATM |>
+  filter(ATM == 'ATM4') |>
+  mutate(mean = mean(Cash)) |>
+  filter(Cash > 10 * mean)
+```
+
+We will replace this value with `NA`, then interpolate with an ARIMA model like was done with the missing values.
+
+```{r}
+ATM <- ATM |>
+  mutate(Cash = replace(Cash, ATM == 'ATM4' & DATE == '2010-02-09', NA))
+
+ATM <- ATM |>
+  model(ARIMA(Cash)) |>
+  interpolate(ATM)
+
+ATM |>
+  filter(ATM == 'ATM4' & DATE == '2010-02-09')
+```
+
+```{r}
+ATM4 <- ATM |>
+  filter(ATM == 'ATM4')
+```
+
+#### Series Exploration
+
+The data appears to follow the same weekly pattern as ATM1 and ATM2.
+
+```{r}
+ATM4 |>
+  gg_tsdisplay(Cash, plot_type = 'partial') + 
+  labs(title = 'ATM4 Usage')
+```
+
+#### Transformation
+
+Identify a lambda value for a Box-Cox transformation.
+
+```{r}
+lambda <- ATM4 |>
+  features(Cash, features = guerrero) |>
+  pull(lambda_guerrero)
+
+lambda
+```
+
+#### Models
+
+We will construct a few models to determine the best choice. 
+
+```{r}
+fit4 <- ATM4 |>
+  model(
+    additive = ETS(box_cox(Cash, lambda) ~ error('A') + trend('N') + season('A')),
+    multiplicative = ETS(box_cox(Cash, lambda) ~ error('M') + trend('N') + season('M')),
+    arima = ARIMA(box_cox(Cash, lambda), stepwise = FALSE)
+  )
+
+fit4 |>
+  glance() |>
+  select(.model:BIC) |>
+  arrange(AIC)
+```
+
+The ARIMA model has the lowest AIC statistic.
+
+```{r}
+fit4 |>
+  select(arima) |>
+  report()
+```
+
+```{r}
+fit4 |>
+  select(arima) |>
+  gg_tsresiduals()
+```
+
+The residuals for the ARIMA model appear to normal centered around zero and have no spikes outside of the confidence interval. 
+
+#### Forecast
+
+```{r}
+fc4 <- fit4 |>
+  select(ATM, arima) |>
+  forecast(h = 31)
+```
+
+```{r}
+fc4 |>
+  autoplot(ATM4)
+```
+
+```{r}
+fc4 |>
+  as.data.frame() |>
+  select(DATE, .mean) |>
+  rename(Cash = .mean) |>
+  mutate(Cash = round(Cash,0))
+```
+
+## Forecasted Data
+
+```{r, fig.show = 'hold', out.width = '50%'}
+fc <- fc1 |>
+  bind_rows(fc2) |>
+  bind_rows(fc3) |>
+  bind_rows(fc4) |>
+  as.data.frame() |>
+  select(DATE, ATM, .mean) |>
+  rename(Cash = .mean)
+
+fc |> as_tsibble(index = DATE, key = ATM) |>
+  autoplot(Cash) + 
+  facet_wrap(~ATM, ncol = 1, scales = 'free_y') + 
+  labs(title = 'ATM Forecasts for May 2010')
+
+fc |> as_tsibble(index = DATE, key = ATM) |>
+  autoplot(Cash) + 
+  autolayer(ATM, Cash, color = 'black') + 
+  facet_wrap(~ATM, ncol = 1, scales = 'free_y') + 
+  labs(title = 'ATM Usage')
+```
+
+### Export to Excel
+
+```{r}
+fc |>
+  write.xlsx('./Output/ATMForecast.xlsx')
+```
+
+# Part B
+
+**Forecasting Power** - *ResidentialCustomerForecastLoad-624.xlsx*
+
+Part B consists of a simple dataset of residential power usage for January 1998 until December 2013. Your assignment is to model these data and a monthly forecast for 2014. The data is given in a single file. The variable ‘KWH’ is power consumption in Kilowatt hours, the rest is straight forward. Add this to your existing files above.
+
+
+## Loading Data
+
+Loaded data from an Excel file into a `tsibble` object. Converted the YYYY-MMM column to a yearmonth value, and excluded the CaseSequence column from the data. 
+
+```{r Load_Power, warning=FALSE, echo=FALSE}
+Power <- read.xlsx('./Data/ResidentialCustomerForecastLoad-624.xlsx', sheet = 1) |>
+  rename(Month = 'YYYY-MMM') |>
+  mutate(Month = yearmonth(Month)) |>
+  select(Month, KWH) |>
+  as_tsibble(index = Month)
+
+Power |>
+  autoplot(KWH) + 
+  labs(title = 'Residential Power Load')
+```
+
+## Missing Values and Outliers
+
+There is a single missing value and one value that appears to be a clear outlier.
+
+```{r}
+Power |>
+  mutate(mean = mean(KWH, na.rm = TRUE)) |>
+  filter(is.na(KWH) | KWH < .25 * mean | KWH > 4 * mean)
+```
+
+We will replace the KWH value for July 2010 with NA, then use an ARIMA model to interpolate the two values.
+
+```{r}
+Power <- Power |>
+  mutate(KWH = replace(KWH, Month == yearmonth('2010 Jul'), NA))
+
+Power <- Power |>
+  model(ARIMA(KWH)) |>
+  interpolate(Power)
+
+Power |>
+  filter(Month == yearmonth('2008 Sep') | Month == yearmonth('2010 Jul'))
+```
+
+## Series Exploration
+
+The data has a clear seasonal pattern with spikes in winter and summer months and lows in the spring and fall. The ACF graph shows spikes on the lags in multiples of 6. There is an overall increasing trend in power consumption.
+
+```{r}
+Power |>
+  gg_tsdisplay(KWH, plot_type = 'partial')
+```
+
+## Transformation
+
+Identify a lambda value for a Box-Cox transformation.
+
+```{r}
+lambda <- Power |>
+  features(KWH, features = guerrero) |>
+  pull(lambda_guerrero)
+
+lambda
+```
+
+## Models
+
+We will construct a few models to determine which is best.
+
+```{r}
+Power.fit <- Power |>
+  model(
+    additive = ETS(box_cox(KWH, lambda) ~ error('A') + trend('N') + season('A')),
+    multiplicative = ETS(box_cox(KWH, lambda) ~ error('M') + trend('N') + season('M')),
+    arima = ARIMA(box_cox(KWH, lambda), stepwise = FALSE)
+  )
+
+Power.fit |>
+  glance() |>
+  select(.model:BIC) |>
+  arrange(AIC)
+```
+
+The ARIMA(0,0,3)(2,1,0)[12] model produced the lowest AIC.
+
+```{r}
+Power.fit |>
+  select(arima) |>
+  report()
+```
+
+Graphing the residuals appear to be white noise. The ACF chart shows lags within the confidence interval. We conclude that the model is sound and can be used to forecast values.
+
+```{r}
+Power.fit |>
+  select(arima) |>
+  gg_tsresiduals()
+```
+
+## Forecast
+
+```{r}
+Power.fc <- Power.fit |>
+  select(arima) |>
+  forecast(h = 12)
+```
+
+```{r}
+Power.fc |>
+  autoplot(Power)
+```
+
+```{r}
+Power.fc |>
+  as.data.frame() |>
+  select(Month, .mean) |>
+  rename(KWH = .mean) |>
+  mutate(KWH = round(KWH,0))
+```
+
+## Export to Excel
+
+```{r}
+Power.fc |>
+  as.data.frame() |>
+  select(Month, .mean) |>
+  rename(KWH = .mean) |>
+  mutate(KWH = round(KWH,0)) |>
+  write.xlsx('./Output/PowerForecast.xlsx')
+```
+
