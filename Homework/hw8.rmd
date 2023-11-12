@@ -1,0 +1,299 @@
+---
+title: 'DATA624: Homework 8'
+author: "Donald Butler"
+date: "2023-11-12"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80), tidy=TRUE, echo = TRUE)
+```
+
+# Homework 8
+
+```{r, warning=FALSE, error=FALSE}
+library(tidyverse)
+library(AppliedPredictiveModeling)
+library(caret)
+library(mlbench)
+library(earth)
+library(kernlab)
+```
+
+## Exercise 7.2
+
+Friedman (1991) introduced several benchmark data sets created by simulation. One of these simulations used the following nonlinear equation to create data:  
+
+$$y = 10 sin(\pi x_1 x_2) + 20 (x_3 - 0.5)^2 + 10 x_4 + 5 x_5 + N(0,\sigma^2)$$
+where the $x$ values are random variables uniformly distributed between $[0,1]$ (there are also 5 other non-informative variables also created in the simulation). The package `mlbench` contains a function called `mlbench.friedman1` that simulates these data:
+
+```{r}
+set.seed(31415)
+trainingData <- mlbench.friedman1(200, sd = 1)
+## We convert the 'x' data from a matrix to a data frame
+## One reason is taht this will give the column names.
+trainingData$x <- data.frame(trainingData$x)
+## Look at the data using
+featurePlot(trainingData$x, trainingData$y)
+## or other methods
+
+## This creates a list with a vector 'y' and a matrix
+## of predictors 'x'. Also simulate a large test set to
+## estimate the true error rate with good precision:
+testData <- mlbench.friedman1(5000, sd = 1)
+testData$x <- data.frame(testData$x)
+```
+
+Tune several models on these data. For example: 
+
+### KNN: k-Nearest Neighbors
+
+```{r}
+knnModel <- train(x = trainingData$x,
+                  y = trainingData$y,
+                  method = 'knn',
+                  preProcess = c('center', 'scale'),
+                  tuneLength = 10)
+
+knnModel
+```
+
+```{r}
+knnPred <- predict(knnModel, newdata = testData$x)
+## The function 'postResample can be used to get the test set
+## performance values
+knnResult <- data.frame(as.list(postResample(pred = knnPred, obs = testData$y))) |>
+  mutate(model = 'knn') |>
+  relocate(model, RMSE, Rsquared, MAE)
+knnResult
+```
+
+### NNET: Neural Networks
+
+```{r}
+nnetTune <- train(trainingData$x, trainingData$y,
+                  method = 'nnet',
+                  tuneGrid = expand.grid(.decay = c(0, 0.01, .1), .size = c(1:10)),
+                  trControl = trainControl(method = 'cv', number = 10),
+                  preProcess = c('center', 'scale'),
+                  linout = TRUE, trace = FALSE,
+                  MaxNWts = 10 * (ncol(trainingData$x) + 1) + 10 + 1,
+                  maxit = 500)
+nnetTune
+```
+
+```{r}
+nnetPred <- predict(nnetTune, newdata = testData$x)
+## The function 'postResample can be used to get the test set
+## performance values
+nnetResult <- data.frame(as.list(postResample(pred = nnetPred, obs = testData$y))) |>
+  mutate(model = 'nnet') |>
+  relocate(model, RMSE, Rsquared, MAE)
+nnetResult
+```
+
+### MARS: Multivariate Adaptive Regression Splines
+
+```{r}
+marsTune <- train(trainingData$x, trainingData$y,
+                  method = 'earth',
+                  tuneGrid = expand.grid(.degree = 1:2, .nprune = 2:38),
+                  trControl = trainControl(method = 'cv'))
+marsTune
+```
+
+```{r}
+marsPred <- predict(marsTune, newdata = testData$x)
+marsResult <- data.frame(as.list(postResample(pred = marsPred, obs = testData$y))) |>
+  mutate(model = 'MARS') |>
+  relocate(model, RMSE, Rsquared, MAE)
+marsResult
+```
+
+### SVM: Support Vector Machines
+
+```{r}
+svmTune <- train(trainingData$x, trainingData$y,
+                 method = 'svmRadial',
+                 preProcess = c('center','scale'),
+                 tuneLength = 14,
+                 trControl = trainControl(method = 'cv'))
+svmTune
+```
+
+```{r}
+svmPred <- predict(svmTune, testData$x)
+svmResult <- data.frame(as.list(postResample(pred = svmPred, obs = testData$y))) |>
+  mutate(model = 'SVM') |>
+  relocate(model, RMSE, Rsquared, MAE)
+svmResult
+```
+
+### Summary
+
+Which models appear to give the best performance? 
+
+```{r}
+knnResult |>
+  union(nnetResult) |>
+  union(marsResult) |>
+  union(svmResult) |>
+  arrange(desc(Rsquared))
+```
+
+The MARS model appears to give the best performance based on the RMSE and $R^2$ statistics.
+
+Does MARS select the informative predictors (those named `X1`-`X5`)?
+
+```{r}
+varImp(marsTune)$importance |>
+  arrange(desc(Overall)) |>
+  head(10)
+```
+
+The MARS model selects the informative predictors, but `X3` appears to be insignificant and has an overall importance of 0.
+
+## Exercise 7.5
+
+Exercise 6.3 describes data for a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several nonlinear regression models.
+
+### From Homework 7
+
+```{r}
+data(ChemicalManufacturingProcess)
+imputed <- predict(preProcess(ChemicalManufacturingProcess, method = 'bagImpute'), ChemicalManufacturingProcess)
+
+X <- imputed |>
+  select(-Yield)
+y <- imputed$Yield
+
+X <- X[,-nearZeroVar(X)]
+
+train <- createDataPartition(y, p = .8, list = FALSE)
+X_train <- X[train,]
+X_test <- X[-train,]
+y_train <- y[train]
+y_test <- y[-train]
+```
+
+### KNN: k-Nearest Neighbors
+
+```{r}
+knnModel <- train(X_train, y_train,
+                  method = 'knn',
+                  preProcess = c('center','scale'),
+                  tuneLength = 10)
+knnModel
+```
+
+```{r}
+knnPred <- predict(knnModel, newdata = X_test)
+knnResult <- data.frame(as.list(postResample(pred = knnPred, obs = y_test))) |>
+  mutate(model = 'knn') |>
+  relocate(model, RMSE, Rsquared, MAE)
+knnResult
+```
+
+### NNET: Neural Networks
+
+```{r}
+nnetModel <- train(X_train, y_train,
+                  method = 'nnet',
+                  tuneGrid = expand.grid(.decay = c(0, 0.01, .1), .size = c(1:10)),
+                  trControl = trainControl(method = 'cv', number = 10),
+                  preProcess = c('center', 'scale'),
+                  linout = TRUE, trace = FALSE,
+                  MaxNWts = 10 * (ncol(X_train) + 1) + 10 + 1,
+                  maxit = 500)
+nnetModel
+```
+
+```{r}
+nnetPred <- predict(nnetModel, newdata = X_test)
+nnetResult <- data.frame(as.list(postResample(pred = nnetPred, obs = y_test))) |>
+  mutate(model = 'nnet') |>
+  relocate(model, RMSE, Rsquared, MAE)
+nnetResult
+```
+
+### MARS: Multivariate Adaptive Regression Splines
+
+```{r}
+marsModel <- train(X_train, y_train,
+                  method = 'earth',
+                  tuneGrid = expand.grid(.degree = 1:2, .nprune = 2:38),
+                  trControl = trainControl(method = 'cv'))
+marsModel
+```
+
+```{r}
+marsPred <- predict(marsModel, newdata = X_test)
+marsResult <- data.frame(as.list(postResample(pred = marsPred, obs = y_test))) |>
+  mutate(model = 'MARS') |>
+  relocate(model, RMSE, Rsquared, MAE)
+marsResult
+```
+
+### SVM: Support Vector Machines
+
+```{r}
+svmModel <- train(X_train, y_train,
+                 method = 'svmRadial',
+                 preProcess = c('center','scale'),
+                 tuneLength = 14,
+                 trControl = trainControl(method = 'cv'))
+svmModel
+```
+
+```{r}
+svmPred <- predict(svmModel, newdata = X_test)
+svmResult <- data.frame(as.list(postResample(pred = svmPred, obs = y_test))) |>
+  mutate(model = 'SVM') |>
+  relocate(model, RMSE, Rsquared, MAE)
+svmResult
+```
+
+### Summary
+
+a. Which nonlinear regression model gives the optimal resampling and test set performance?
+
+```{r}
+knnResult |>
+  union(nnetResult) |>
+  union(marsResult) |>
+  union(svmResult) |>
+  arrange(desc(Rsquared))
+```
+
+The SVM model produced the highest $R^2$ value indicating it is the best model.
+
+b. Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the list? How do the top ten important predictors compare to the top ten predictors from the optimal linear model?
+
+```{r}
+top10 <- varImp(svmModel)$importance |>
+  arrange(desc(Overall)) |>
+  head(10)
+top10
+```
+
+The manufacturing process and biological material predictors are split evenly in the top 10 in the SVM model. In the previous exercise, the PLS model was the best linear model and the manufacturing processes were the most important predictors.
+
+c. Explore the relationships between the top predictors and the response for the predictors that are unique to the optimal nonlinear regression model. Do these plots reveal intuition about the biological or process predictors and their relationship with yield?
+
+```{r}
+imputed |>
+  select(c('Yield', row.names(top10))) |>
+  cor() |>
+  corrplot::corrplot()
+```
+
+Manufacturing Process 32 and 09 have the strongest correlation with the Yield and Manufacturing Process 36 has the highest inverse correlation with the Yield. 
+
