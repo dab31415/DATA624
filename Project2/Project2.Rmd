@@ -1,0 +1,363 @@
+---
+title: "Project 2"
+author: "Brett Davidoff, Donald Butler, Tyler Brown"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: yeti
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+# Intoduction
+
+This is role playing. I am your new boss. I am in charge of production at ABC Beverage and you are a team of data scientists reporting to me. My leadership has told me that new regulations are requiring us to understand our manufacturing process, the predictive factors and be able to report to them our predictive model of PH.
+
+Please use the historical data set I am providing. Build and report the factors in BOTH a technical and non-technical report. I like to use Word and Excel. Please provide your non-technical report in a business-friendly readable document and your predictions in an Excel-readable format. The technical report should show clearly the models you tested and how you selected your final approach.
+
+Please submit both Rpubs links and .rmd files or other readable formats for technical and non-technical reports. Also submit the Excel file showing the prediction of your models for pH.
+
+```{r, warning=FALSE, message=FALSE}
+# Add libraries for data analysis and visualization
+library(tidyverse)
+library(fpp3)
+library(caret)
+library(RANN)
+library(psych)
+library(DataExplorer)
+library(randomForest)
+library(Cubist)
+library(rpart)
+library(openxlsx)
+library(corrplot)
+library(mice)
+library(earth)
+```
+
+# Data Exploration
+
+## Loading and Evaluating the Data
+
+Historical data was provided in an Excel document. The data is read into a dataframe and evaluated.
+
+```{r}
+# Read data from Excel files
+train.df <- read.xlsx('StudentData.xlsx', sheet = 1)
+eval.df <- read.xlsx('StudentEvaluation.xlsx', sheet = 1)
+glimpse(train.df)
+```
+
+### Categorical Data
+
+`Brand.Code` is the only categorical predictor in the data set and needs to be converted to a factor.
+
+```{r}
+# Convert Brand.Code to a factor
+train.df <- train.df |>
+  mutate(Brand.Code = as.factor(Brand.Code))
+
+eval.df <- eval.df |>
+  mutate(Brand.Code = as.factor(Brand.Code))
+
+# Create a bar plot to visualize the distribution of Brand.Code
+train.df |>
+  ggplot() + 
+  geom_bar(aes(x = Brand.Code)) + 
+  labs(title = 'Distribution of Brand.Code') + 
+  #plot data
+  theme_minimal()
+```
+
+### Numerical Distributions
+
+`PH` is the response variable and the remaining are predcictors for that response. 
+
+```{r}
+# Display summary statistics for numerical variables
+train.df |>
+  keep(is.numeric ) |>
+  summary()
+```
+
+### Predictor Correlations
+
+We constructed a correlation plot to determine which predictors are related to `PH`, and also to determine if there are predictors that are highly related to other variables.
+
+```{r}
+# Create a correlation plot for numerical variables
+train.df |>
+  keep(is.numeric) |>
+  na.omit() |>
+  cor() |>
+  corrplot(tl.col = 'black', tl.cex = .6)
+```
+
+Look at the chart, there are several variables that have a very low correlation to `PH`, for example, `Carb.Temp`, `PSC`, `PSC.Fill`, and `PSC.CO2`, seem to have little relationship to `PH`.
+
+### Near-Zero Variance
+
+We want to look for variables that have near-zero variance which indicate that they play little to no role in determining the `PH` of the beverage.
+
+```{r}
+# Identify and filter variables with near-zero variance
+train.df |>
+  nearZeroVar(saveMetrics = TRUE) |>
+  filter(nzv == TRUE)
+```
+
+The predictor `Hyd.Pressure1` has near-zero variance and will be removed from the model.
+
+### Missing Values
+
+Many of the predictors are missing values that will need to be evaluated and imputed to develop a consistent model.
+
+```{r}
+# Create a missing data plot
+plot_missing(train.df)
+```
+
+Using the mice package with Predictive Mean Matching to impute the missing values. Then removing `Hyd.Pressure1` which has near-zero variance.
+
+```{r, warning=FALSE}
+# Impute missing values using Predictive Mean Matching
+impute.df <- train.df |>
+  mice(m = 1, method = 'pmm', print = FALSE) |>
+  complete()
+
+# Remove near-zero parameters Hyd.Pressure1
+impute.df <- impute.df[,-nearZeroVar(impute.df)]
+summary(impute.df)
+```
+
+# Build Models
+
+## Split-Data
+
+We will create an 80/20 split of the data so that we can evaluate the effectiveness of each model.
+
+```{r, echo=FALSE}
+set.seed(200)
+
+# Create 80/20 split of the training data
+dp = createDataPartition(impute.df$PH, p=0.8, list=FALSE)
+
+train.x = impute.df[dp,] %>% select(-PH)
+train.y = impute.df[dp,"PH"]
+
+test.x = impute.df[-dp,] %>% select(-PH)
+test.y = impute.df[-dp,"PH"]
+```
+
+## {.tabset}
+
+### LM
+
+Construct a Linear Regression Model with the training set and evaluate against the test set.
+
+```{r LM}
+set.seed(200)
+
+lm.model <- train(train.x, train.y,
+                  method = "lm",
+                  trControl = trainControl(method = "cv",number = 10))
+lm.model
+lm.pred <- predict(lm.model, newdata = test.x)
+postResample(pred = lm.pred, obs = test.y)
+```
+
+### PLS
+
+Construct a Partial Least Squares Model with the training set and evaluate against the test set.
+
+```{r PLS}
+set.seed(200)
+
+pls.model <- train(train.x, train.y,
+                   method='pls',
+                   tuneLength=20,
+                   trControl=trainControl(method='cv', number=10),
+                   preProc=c('center','scale'))
+
+pls.model
+plot(pls.model)
+pls.pred <- predict(pls.model, newdata = test.x)
+postResample(pred = pls.pred, obs = test.y)
+```
+
+
+### MARS
+
+Construct a Multivariate Adaptive Regression Spline Model with the training set and evaluate against the test set.
+
+```{r MARS, warning=FALSE}
+set.seed(200)
+
+mars.model <- train(x = train.x, 
+                    y = train.y,
+                    method='earth',
+                    tuneGrid = expand.grid(.degree = 1:2, .nprune = 2:15),
+                    preProcess = c('center','scale'),
+                    tuneLength = 10,
+                    trControl = trainControl(method='cv'))
+
+mars.model
+mars.pred <- predict(mars.model, newdata = test.x)
+postResample(pred = mars.pred, obs = test.y)
+```
+
+### BT
+
+Construct a Boosted Tree Model with the training set and evaluate against the test set.
+
+```{r BoostedTrees}
+set.seed(200)
+
+gbm.model <- train(train.x, train.y,
+                 method="gbm",
+                 trControl=trainControl(method="cv",n=10),
+                 tuneGrid=expand.grid(interaction.depth = seq(1,7,by=2),
+                                      n.trees=seq(100, 1000, by=50),
+                                      shrinkage=c(0.01,0.1,by=0.01),
+                                      n.minobsinnode=10),
+                 verbose=FALSE)
+gbm.model
+gbm.pred <- predict(gbm.model, newdata = test.x)
+postResample(pred = gbm.pred, obs = test.y)
+```
+
+### RF
+
+Construct a Random Forest Model with the training set and evaluate against the test set.
+
+```{r RandomForest}
+set.seed(200)
+
+rf.model <- randomForest(train.x, train.y,
+                         importance=TRUE,
+                         ntree=2000)
+rf.model
+rf.pred <- predict(rf.model, newdata = test.x)
+postResample(pred = rf.pred, obs = test.y)
+```
+
+
+### CART
+
+Construct a Classification and Regression Tree Model with the training set and evaluate against the test set.
+
+```{r Cart, warning=FALSE}
+set.seed(200)
+
+cart.model <- train(train.x, train.y,
+                    method="rpart",
+                    tuneLength = 10,
+                    trControl=trainControl(method="cv"))
+cart.model
+cart.pred <- predict(cart.model, newdata = test.x)
+postResample(pred = cart.pred, obs = test.y)
+```
+
+### SVM
+
+Construct an SVM Model with the training set and evaluate against the test set. This model requires that the categorical predictor, `Brand.Code`, be removed.
+
+```{r SVM}
+set.seed(200)
+
+svm.model <- train(train.x[,-1], train.y,
+                   method = 'svmRadial',
+                   preProcess = c('center','scale'),
+                   tuneLength = 10,
+                   trControl = trainControl(method = 'cv'))
+svm.model
+svm.pred = predict(svm.model, newdata = test.x[,-1])
+postResample(pred = svm.pred, obs = test.y)
+```
+
+## Model Results
+
+```{r Results}
+results <- data.frame(as.list(postResample(pred = lm.pred, obs = test.y))) |> mutate(model = 'LM') |>
+  union(data.frame(as.list(postResample(pred = pls.pred, obs = test.y))) |> mutate(model = 'PLS')) |>
+  union(data.frame(as.list(postResample(pred = mars.pred, obs = test.y))) |> mutate(model = 'MARS')) |>
+  union(data.frame(as.list(postResample(pred = gbm.pred, obs = test.y))) |> mutate(model = 'TREE')) |>
+  union(data.frame(as.list(postResample(pred = rf.pred, obs = test.y))) |> mutate(model = 'RF')) |>
+  union(data.frame(as.list(postResample(pred = cart.pred, obs = test.y))) |> mutate(model = 'CART')) |>
+  union(data.frame(as.list(postResample(pred = svm.pred, obs = test.y))) |> mutate(model = 'SVM')) |>
+  relocate(model, RMSE, Rsquared, MAE)
+
+results |>
+  arrange(desc(Rsquared))
+```
+
+The Random Forest Model has the highest $R^2$ value and will be chosen to model the `PH` values.
+
+# Model Evaluation
+
+## Predictor Importance
+
+Looking at the top 10 predictors we see that `Brand.Code` and `Mnf.Flow` are the two most important predictors for determining the `PH`.
+
+```{r ModelEval}
+top10 <- varImp(rf.model) |>
+  arrange(desc(Overall)) |>
+  head(10)
+
+# Plotting the variable importance
+varImpPlot(rf.model, n.var = 10)
+```
+
+## Correlation for Important Predictors
+
+Now that we know which predictors are most important for determining the `PH` of the beverage, we can look at the correlation matrix to see how they relate.
+
+```{r, warning=FALSE}
+impute.df |>
+  select(c('PH', row.names(top10))) |>
+  keep(is.numeric) |>
+  cor() |>
+  corrplot()
+```
+
+# Forecast PH
+
+## Impute Missing Values
+
+We will impute missing values in the evaluation data set using the same method as the training set. Again we will remove `Hyd.Pressure` because it has near-zero variance.
+
+```{r, warning=FALSE}
+set.seed(200)
+
+eval.impute <- eval.df |>
+  select(-PH) |>
+  mice(m = 1, method = 'pmm', print = FALSE) |>
+  complete() |>
+  mutate(PH = '') |>
+  select(-Hyd.Pressure1)
+```
+
+## Predict PH
+
+Using the Random Forest Model, we will predict the `PH` in the evaluation data set.
+
+```{r}
+eval.pred <- predict(rf.model, newdata = eval.impute)
+head(eval.pred, 10)
+```
+
+## Create Output
+
+Insert the computed `PH` into the original evaluation data set and export to Excel.
+
+```{r}
+pred.df <- eval.df |>
+  mutate(PH = eval.pred)
+
+pred.df |>
+  write.xlsx('StudentEvaluationPreds.xlsx')
+```
